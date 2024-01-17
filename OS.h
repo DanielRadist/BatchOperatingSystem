@@ -1,6 +1,6 @@
 #pragma once
-#ifndef BOS_OS.H
-#include <queue>
+#ifndef BOS_OS_H
+#include <vector>
 #include <list>
 #include <string>
 #include <ctime>
@@ -14,26 +14,30 @@
 class OS
 {
 private:
-	std::queue<Task*>* package = nullptr;		// очередь из задач - пакет
-	std::list<Task*>* trash = nullptr;			// корзина для отработанных задач 
+	std::vector<Task*>* package = nullptr;		// очередь из задач - пакет
 	const int operationsMax = 20;				// максимальное кол-во операций в задаче
 
 	// Пакет
-	int countOperations = 0;
-	int countTime = 0;
+	int countOperations = 0;					// кол-во выполненых операций
+	int countTimeWork = 0;						// время работы
+	int countTimeWait = 0;						// простой
 
-	// типы задач
-	
-	int countTimeTaskProcess = 0;				// вычислительная
-	int countTimeTaskIO = 0;					// ввод / вывод
-	int countTimeTaskBalance = 0;				// сбалансированная
+	// вероятность генерирования типа задачи в %
+	const int probabilityProcess = 50;
+	const int probabilityIO = 25;
+	const int probabilityBalance = 25;
+
+	int tid = 101;								// task id
+
+	const int delay = 0;
+
+	const int quantTime = 20;					// максимальное время безпрервного выполения задачи
 
 public:
 
 	OS() 
 	{ 
-		package = new std::queue<Task*>(); 
-		trash = new std::list<Task*>(); 
+		package = new std::vector<Task*>(); 
 	}
 
 	~OS() 
@@ -41,17 +45,10 @@ public:
 		while (!package->empty())
 		{
 			delete package->front();
-			package->pop();
-		}
-
-		while (!trash->empty())
-		{
-			delete trash->front();
-			trash->pop_front();
+			package->erase(package->begin());
 		}
 
 		delete package;
-		delete trash;
 	}
 
 	void generatorPackage(int tasksProcess, int tasksIO, int tasksBalance)
@@ -66,82 +63,205 @@ public:
 
 		while (tasksProcess > 0 || tasksIO > 0 || tasksBalance > 0)
 		{
-			int genTasksType = rand() % 4;		// [0; 5]
 
-			switch (genTasksType)
+			int probabilityGeneratorTasksType = rand() % 100;	// [0; 99]
+			Sleep(1);
+			// task process
+			if (probabilityGeneratorTasksType < probabilityProcess)
 			{
-			case 0:								// tasksBalance
-				if (tasksBalance > 0)
-				{
-					tasksBalance--;
-					package->push(new Balance(5 + rand() % (10 - 5 + 1)));
-				}
-				break;
-			case 1:								// tasksIO
-				if (tasksIO > 0)
-				{
-					tasksIO--;
-					package->push(new IntIO(1 + rand() % (3)));
-				}
-				break;
-			default:							// tasksProcess
 				if (tasksProcess > 0)
 				{
 					tasksProcess--;
-					package->push(new Process(1 + rand() % (30)));
+					package->push_back(new Process(1 + rand() % (30), tid++));
 				}
-				break;
+			}
+			// task IO
+			else if (probabilityGeneratorTasksType < probabilityProcess + probabilityIO)
+			{
+				if (tasksIO > 0)
+				{
+					tasksIO--;
+					package->push_back(new IntIO(1 + rand() % (4), tid++));
+				}
+			}
+			// task balance
+			else
+			{
+				if (tasksBalance > 0)
+				{
+					tasksBalance--;
+					package->push_back(new Balance(5 + rand() % (10 - 5 + 1), tid++));
+				}
 			}
 		}
 	}
 
-	void run()
+	void runClasic()
 	{
-		while (!package->empty())
+		countOperations = 0;					// кол-во выполненых операций
+		countTimeWork = 0;						// время работы
+		countTimeWait = 0;						// простой
+
+		for (auto task = package->begin(); task != package->end(); task++)
 		{
-			std::cout << package->front()->getInfo() << " ... ";	// вывод информации о задаче
+			std::cout << "### Task: " << (*task)->getInfo() << std::endl;	// берем задачу из пакета
+			(*task)->setStatus(TaskPerformed);								// меняем статус задачи на выполняется
 
-			int delay = package->front()->getTime();				// делай задержку, как будто выполняется задача
-			Sleep(delay * 10);
+			std::cout << "###     : ";
 
-			countOperations += package->front()->getOperations();	// считаем общее время и кол-во операций
-			countTime += package->front()->getTime();
+			while(1)
+			{
+				countOperations++;
+				auto oper = (*task)->getCurrentOperation();					// берем операцию
 
-			if(package->front()->getType() == TaskType::PROCESS)
-				countTimeTaskProcess += package->front()->getTime();
-			if (package->front()->getType() == TaskType::INT_IO)
-				countTimeTaskIO += package->front()->getTime();
-			if (package->front()->getType() == TaskType::BALANCE)
-				countTimeTaskBalance += package->front()->getTime();
+				std::cout << (*task)->getIterratorQueue() + 1 << "-P";		// выполняется операция
+				countTimeWork += (*oper).getTimeWork();
+				Sleep((*oper).getTimeWork() * delay);
 
-			std::cout << "Done! ";									// говорим, что задача выполнена
-			std::cout << std::to_string(countTime) << " y.e.";		// выводим затраченное время на выполнения выполненых задач
+				if ((*oper).getType() == IO)
+				{
+					std::cout << ">W";										// ожидается ввод / вывод
+					(*task)->setStatus(TaskWaitIO);							// меняем статус задачи на ожидает ввод/вывод
+					countTimeWait += (*oper).getTimeWait();
+					Sleep((*oper).getTimeWait() * delay);
+				}
+
+				std::cout << ">R ";											// завершилось выполнение операции
+
+				if ((*task)->hasNextOperation())							// останов цикла
+					(*task)->nextOperation();
+				else
+					break;
+			}
+			(*task)->setStatus(TaskReady);									// меняем статус задачи на выполнена
 			std::cout << std::endl;
-
-			trash->push_back(package->front());						// кидаем отработанную задачу в корзину
-			package->pop();											// убираем задачу из очереди
 		}
 
-		std::cout << "TOTAL operations: " << getCountOperationWork() << " | TOTAL time: " << getTimeWork() << " y.e." << std::endl;
-		std::cout << "Task times: "
-			<< "  process: " << countTimeTaskProcess << " y.e. "
-			<< "  IO: " << countTimeTaskIO << " y.e. "
-			<< "  Balance: " << countTimeTaskBalance << " y.e. "
-			<< std::endl;
+		std::cout << "TOTAL operations: " << getCountOperationWork() << " | TOTAL time: " << getTimeWork() + getTimeWait() << " y.e." << std::endl;
+		std::cout << "TOTAL work: " << getTimeWork() << " | TOTAL wait: " << getTimeWait() << " y.e." << std::endl;
+		std::cout << "Wait times: " << countTimeWait << " y.e. " << std::endl;
 	}
+
+	void runQuantizationTime()
+	{
+		countOperations = 0;					// кол-во выполненых операций
+		countTimeWork = 0;						// время работы
+		countTimeWait = 0;						// простой
+
+		int iterTask = 0;
+
+		bool flag = false;
+		int flagIter = -1;
+
+		while (1)
+		{
+			//
+
+			if (iterTask == -1)												// все задачи выполнили
+				break;
+
+			std::cout << "### Task: " << package->at(iterTask)->getInfo() << std::endl;	// берем задачу из пакета
+			std::cout << "###     : ";
+
+			int saveCountTimeWork = countTimeWork;
+			while (countTimeWork - saveCountTimeWork < quantTime)			// ограничение беспрерывного выполнения задачи (квантование по времени)
+			{
+				if (package->at(iterTask)->getCurrentOperation()->getStatus() == OperQueue)
+				{
+					flag = false;
+					package->at(iterTask)->getCurrentOperation()->setStatusPerformed();
+					package->at(iterTask)->setStatus(TaskPerformed);
+
+					std::cout << " " << package->at(iterTask)->getIterratorQueue() + 1 << "-P";	// выполняется операция
+					Sleep(package->at(iterTask)->getTimeWork() * delay);
+					countTimeWork += package->at(iterTask)->getCurrentOperation()->getTimeWork();
+
+					if (package->at(iterTask)->getCurrentOperation()->getTimeWait() > 0)
+					{
+						std::cout << ">W";									// ожидается ввод / вывод
+						Sleep(package->at(iterTask)->getTimeWait() * delay);
+						package->at(iterTask)->getCurrentOperation()->setStatusWaitIO();
+						package->at(iterTask)->setStatus(TaskWaitIO);
+						flag = true;
+						flagIter = iterTask;
+						break;
+					}
+					else
+					{
+						package->at(iterTask)->getCurrentOperation()->setStatusReady();
+						std::cout << ">R ";								
+						flag = false;
+					}
+				}
+				else if (package->at(iterTask)->getCurrentOperation()->getStatus() == OperWaitIO)
+				{
+					std::cout << " " << package->at(iterTask)->getIterratorQueue() + 1 << "-W";
+					if (flag == true && flagIter == iterTask)
+					{
+						countTimeWait += package->at(iterTask)->getCurrentOperation()->getTimeWait();
+						std::cout << "(WAIT)";
+						Sleep(package->at(iterTask)->getTimeWait() * delay);
+					}
+					package->at(iterTask)->getCurrentOperation()->setStatusReady();
+					std::cout << ">R ";
+					Sleep(package->at(iterTask)->getTimeWork() * delay);
+					flag = false;
+				}
+				else
+					std::cout << "ERROR!! \n";
+				countOperations++;
+
+				if (package->at(iterTask)->hasNextOperation() == false)
+					package->at(iterTask)->setStatus(TaskReady);
+				else
+					package->at(iterTask)->nextOperation();
+
+
+				if (package->at(iterTask)->getStatus() == TaskReady)
+					break;
+				else
+					package->at(iterTask)->setStatus(TaskQueue);
+			}
+			iterTask = nextUncompletedTask(iterTask);						// получаем индекс следующей не выполненой задачи
+			std::cout << std::endl;
+		}
+
+		std::cout << "TOTAL operations: " << getCountOperationWork() << " | TOTAL time: " << getTimeWork() + getTimeWait() << " y.e." << std::endl;
+		std::cout << "TOTAL work:       " << getTimeWork() << " | TOTAL wait: " << getTimeWait() << " y.e." << std::endl;
+		std::cout << "Wait times:       " << countTimeWait << " y.e. " << std::endl;
+	}
+
 
 	void reset()
 	{
-		countOperations = 0;
-		countTime = 0;
-		countTimeTaskProcess = 0;
-		countTimeTaskIO = 0;					
-		countTimeTaskBalance = 0;
+		for (auto task = package->begin(); task != package->end(); task++)
+		{
+			(*task)->setStatus(TaskQueue);
+			(*task)->startPosIterrator();
+			
+			while (1)
+			{
+				(*task)->getCurrentOperation()->setStatusQueue();
+
+				if ((*task)->hasNextOperation())							// останов цикла
+					(*task)->nextOperation();
+				else
+					break;
+			}
+
+			(*task)->setStatus(TaskQueue);
+			(*task)->startPosIterrator();
+		}
 	}
 
 	int getTimeWork()
 	{
-		return countTime;
+		return countTimeWork;
+	}
+
+	int getTimeWait()
+	{
+		return countTimeWait;
 	}
 
 	int getCountOperationWork()
@@ -149,24 +269,28 @@ public:
 		return countOperations;
 	}
 
-	int getTimeTaskProcess()
+	int nextUncompletedTask(int iterratorTask)					// roundrobin (кольцевой список)
 	{
-		return countTimeTaskProcess;
-	}
+		int curr = iterratorTask;
 
-	int getTimeTaskIO()
-	{
-		return countTimeTaskIO;
-	}
+		do
+		{
+			if (curr + 1 >= package->size())			// дошли до конца списка, перешли в начало
+				curr = 0;
+			else
+				curr++;
 
-	int getTimeTaskBalance()
-	{
-		return countTimeTaskBalance;
+			if (package->at(curr)->getStatus() != TaskReady)	// если нашли следующую не выполненую задачу, возвращаем ее индекс
+				return curr;
+			
+		} while (curr != iterratorTask);						// прошли круг -> выходим из цикла
+
+		return -1;
 	}
 
 };
 
 
-#endif // BOS_OS.H
+#endif // BOS_OS_H
 
 

@@ -1,9 +1,14 @@
 #pragma once
-#ifndef BOS_TASK.H
+#ifndef BOS_TASK_H
+
+#include "Operation.h"
+
 #include <string>
 #include <map>
+#include <vector>
 
 enum TaskType;
+enum TaskStatus;
 class Task;
 class Process;
 class IntIO;
@@ -14,6 +19,14 @@ enum TaskType
 	PROCESS,
 	INT_IO,
 	BALANCE
+};
+
+enum TaskStatus
+{
+	TaskQueue,				// ожидает в очереди
+	TaskPerformed,			// выполн€етс€
+	TaskWaitIO,				// ожидаетс€ ввод / вывод (дл€ операций IO)
+	TaskReady				// выполнена
 };
 
 inline std::string TaskTypeToString(TaskType type)
@@ -35,18 +48,22 @@ class Task
 {
 protected:
 
-	TaskType type;			// “ип задачи
-	int operations;			//  ол-во операций
+	TaskType type;							// “ип задачи
+	TaskStatus status;						// —осто€ние задачи
+	std::vector<Operation*> queue;			// очередь операций
+	int iterratorQueue;						// указатель на текущий эл-т в очереди
+
+	int tid;								// task id
 
 	const int timeOperationProcess = 5;	// врем€ на одну вычислительную операцию
-	const int timeOperationIO = 20;		// врем€ на одну операцию ввода/вывода
+	const int timeOperationIO = 50;		// врем€ на одну операцию ввода/вывода
 
 private:
 
 	std::string getOperationsString()
 	{
 		std::string tmp = "";
-		std::string valueStr = std::to_string(getOperations());
+		std::string valueStr = std::to_string(queue.size());
 
 		while (tmp.size() + valueStr.size() < 5)
 			tmp.push_back(' ');
@@ -54,20 +71,55 @@ private:
 		return tmp + valueStr;
 	}
 
-	std::string getTimeString()
-	{
-		std::string tmp = std::to_string(getTime());
-		while (tmp.size() < 5)
-			tmp.push_back(' ');
-		return tmp;
-	}
-
 public:
 
-	Task(TaskType type, int operations)
+	Task(TaskType type, int tid)
 	{
 		this->type = type;
-		this->operations = operations;
+		this->iterratorQueue = 0;
+		this->tid = tid;
+
+		this->status = TaskStatus::TaskQueue;
+	}
+
+	~Task()
+	{
+		while (!queue.empty())
+		{
+			delete queue.front();
+			queue.erase(queue.begin());
+		}
+	}
+
+	Operation* getCurrentOperation()
+	{
+		return queue.at(iterratorQueue);
+	}
+
+	bool hasNextOperation()
+	{
+		if (iterratorQueue + 1 < queue.size())
+			return true;
+		else
+		{
+			this->status = TaskReady;
+			return false;
+		}
+	}
+
+	void nextOperation()
+	{
+		iterratorQueue++;
+	}
+
+	void startPosIterrator()
+	{
+		iterratorQueue = 0;
+	}
+
+	int getIterratorQueue()
+	{
+		return iterratorQueue;
 	}
 
 	TaskType getType()
@@ -75,16 +127,56 @@ public:
 		return type;
 	}
 
-	virtual int getOperations()
+	TaskStatus getStatus()
 	{
-		return operations;
+		return status;
 	}
 
-	virtual int getTime() = 0;
+	void setStatus(TaskStatus status)
+	{
+		this->status = status;
+	}
 
+	int getTimeWork()
+	{
+		int sum = 0;
+		for (int i = 0; i < queue.size(); i++)
+			sum += queue.at(i)->getTimeWork();
+		return sum;
+	}
+
+	int getTimeWait()
+	{
+		int sum = 0;
+		for (int i = 0; i < queue.size(); i++)
+			sum += queue.at(i)->getTimeWait();
+		return sum;
+	}
+
+	std::string getTimeWorkString()
+	{
+		std::string tmp = "";
+		std::string valueStr = std::to_string(getTimeWork());
+
+		while (tmp.size() + valueStr.size() < 5)
+			tmp.push_back(' ');
+
+		return tmp + valueStr;
+	}
+
+	std::string getTimeWaitString()
+	{
+		std::string tmp = std::to_string(getTimeWait());
+		while (tmp.size() < 5)
+			tmp.push_back(' ');
+		return tmp;
+	}
+
+	
 	virtual std::string getInfo()
 	{
-		return "### Task: " + TaskTypeToString(type) + " " + "  operations / time : " + getOperationsString() + " / " + getTimeString();
+		return TaskTypeToString(type) + "[" + std::to_string(tid) + "] operations:" 
+			+ getOperationsString() + "  time work / time wait :" + getTimeWorkString() + " / " + getTimeWaitString();
 	}
 };
 
@@ -95,11 +187,10 @@ class Process : public Task
 {
 public:
 
-	Process(int operations) : Task(TaskType::PROCESS, operations) { }
-
-	int getTime()
+	Process(int operations, int tid) : Task(TaskType::PROCESS, tid) 
 	{
-		return timeOperationProcess * operations;
+		for (int i = 0; i < operations; i++)
+			queue.push_back(new Operation(OperationType::Math, timeOperationProcess, 0));
 	}
 };
 
@@ -109,12 +200,16 @@ public:
 class IntIO : public Task
 {
 public:
-
-	IntIO(int operations) : Task(TaskType::INT_IO, operations) { }
-
-	int getTime()
+	IntIO(int operations, int tid) : Task(TaskType::INT_IO, tid)
 	{
-		return timeOperationIO * operations;
+		srand(time(NULL));
+		for (int i = 0; i < operations; i++)
+		{
+			if ((rand() % 100) < 20)					// веро€тность по€влени€ операции на вычисление в задачи IO
+				queue.push_back(new Operation(OperationType::Math, timeOperationProcess, 0));
+			else
+				queue.push_back(new Operation(OperationType::IO, timeOperationProcess, timeOperationIO));
+		}
 	}
 };
 
@@ -123,34 +218,18 @@ public:
 /// </summary>
 class Balance : public Task
 {
-private:
-
-	int operationsProcess;
-	int operationsIO;
-
 public:
-
-	Balance(int operationsProcess, int operationsIO) : Task(TaskType::BALANCE, -1)
+	Balance(int operations, int tid) : Task(TaskType::BALANCE, tid)
 	{
-		this->operationsProcess = operationsProcess;
-		this->operationsIO = operationsIO;
-	}
-
-	Balance(int operations) : Task(TaskType::BALANCE, -1)
-	{
-		this->operationsIO = operations / 2;
-		this->operationsProcess = operations - operationsIO;
-	}
-
-	virtual int getOperations()
-	{
-		return operationsProcess + operationsIO;
-	}
-
-	int getTime()
-	{
-		return timeOperationProcess * operationsProcess + timeOperationIO * operationsIO;
+		srand(time(NULL));
+		for (int i = 0; i < operations; i++)
+		{
+			if ((rand() % 100) < 50)					// веро€тность по€влени€ операции на вычисление в задачи Balance
+				queue.push_back(new Operation(OperationType::Math, timeOperationProcess, 0));
+			else
+				queue.push_back(new Operation(OperationType::IO, timeOperationProcess, timeOperationIO));
+		}
 	}
 };
 
-#endif // BOS_TASK.H
+#endif // BOS_TASK_H
